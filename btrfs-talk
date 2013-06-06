@@ -1,0 +1,224 @@
+- btrfs overview
+	- efficient writable/readonly snapshot
+	The btrfs snapshot capability allows a system administrator to quickly capture
+	the state of a filesystem at any given time. Thanks to the copy-on-write mechanism used
+	by btrfs, snapshots share data with other snapshots or the "live" system;
+	blocks are only duplicated when they are changed.
+
+	the efficience is on both time and space, it's a killer feature for backup,
+	it can also used as a filesystem, and you can put your data inside the snapshot,
+	and can mount it independently.
+
+	- internal RAID with restriping
+	we now support raid0, raid1, etc, and restriping allows users to make
+	transition from one type to another, of course it needs to comply with some
+	rules, for example, if your system is on raid0 with only two disks, you cannot restripe to
+	raid10 on top of it.
+
+	- Online device management
+	it's simple and direct, right now we're able to add or delete a disk from a btrfs
+	filesystem. 
+
+	- Online scrub
+	will talk about in later slides.
+
+	- Transparent compression
+	it's helpful on the storage capacity management.  it's transparent so users are not
+	aware of that their data has been compressed.  now we support zlib and lzo, and more
+	compression methods are coming.
+
+- new kernel features
+	- Raid5/6
+		This builds on David Woodhouse's original Btrfs raid5/6 implementation.
+
+		Read/modify/write is done after the higher levels of the filesystem have
+		prepared a given bio.  This means the higher layers are not responsible
+		for building full stripes, and they don't need to query for the topology
+		of the extents that may get allocated during delayed allocation runs.
+
+		It also means different files can easily share the same stripe.
+		and it allows us to have metadata blocks smaller than a full
+		stripe.  That's important if you don't want to spin every disk for each
+		metadata read.
+
+		Right now,
+		Scrub is unable to repair crc errors on raid5/6 chunks.
+		Discard does not work on raid5/6 (yet)
+
+		Plugging -- The on stack plugging code has a slick way for anyone in the
+		IO stack to participate in plugging.  Btrfs is using this to collect
+		partial stripe writes in hopes of merging them into full stripes.  When
+		the kernel code unplugs, we sort, merge and fire off the IOs.  Note that MD has a
+		plugging callback as well.
+
+		btrfs's performance is overall better than MD.  According to chris's investigation,
+		the performance difference here is mainly coming from latencies
+		related to handing off parity to helpers.  Btrfs is doing everything
+		inline and MD is handing off.
+
+	- snapshot-aware defrag
+		As we defragment files, we break any sharing from other snapshots. and defragment
+		doesn't actually modify the data instead it's just making data closer,
+		so we're able to and we need to make defrag preserve the sharing
+
+		The whole thing is easy to understand,
+		first we need to find which snapshots reference the data that is under defragment,
+		and then since we have back reference between file extents and their blocks, we can
+		just update the snapshots' reference to new blocks. 
+
+	- get/set filesystem label
+		it's a small feature, users can mount their filesystem by using LABEL.
+		With this, User can play with Btrfs label through btrfs filesystem label
+
+	- send/receive
+		with this and the associated user space tools, btrfs can be
+		instructed to calculate the set of changes made between two snapshots and
+		serialize them to a file. And That file can then be replayed elsewhere.
+
+		The generated file is essentially a set of instructions for converting
+		the parent snapshot into the one being "sent." by replaying 1 by 1 on the
+		receiving side.	
+
+		These instructions cover the most important calls found for the
+		vfs. Examples are create, mkdir, link, symlink, rename, unlink, write, and so on.
+
+		Only the send side is happening in-kernel. Receive is happening in user-space.
+		the playback of this file can be done almost entirely in user space.
+
+		the format may be changed in future though, clearly, it will need to
+		stabilize before this feature can be considered ready for production use.
+		it's still experimental,
+
+	- online device replace 
+		It replaces the steps of adding a new disk and deleting an old disk
+		in case a disk was lost, or in case a disk just needs to be replaced
+		because the error rate is increasing
+
+		The device replace operation takes place at runtime on a live
+		filesystem, you don't need to unmount it or stop active tasks.
+		It is safe to crash or lose power during the operation, the
+		process resumes with the next mount.
+
+	- remove hardlink limitation
+		btrfs has a limitation on the maximum number of hard links an
+		inode can have. Specifically, links are stored in an array of ref
+		items.
+		
+		Since items can not exceed the size of a leaf, the total number of links
+		that can be stored for a given inode / parent dir pair is limited to under
+		4k(or more if you have big metadata enabled). This works fine for the most
+		common case of few to only a handful of links.
+		Once the link count gets higher however, we begin to return EMLINK.
+
+		this introduces Extended refs, it's important to say that Extended
+		refs don't replace the existing ref array.  An inode gets an extended ref
+		for a given link _only_ after the ref array has been filled.
+
+		this is made to be not compatible with old kernels.
+
+	- subvolume-aware quota
+		to Implement Quota in btrfs is a little hard because btrfs is copy on write
+		so data can be shared, so how to account data could be an issue.
+		This subvolume quota groups solve it.
+
+		This is similar to directory quota, and it enables full tracking
+		of how many blocks are allocated to each subvolume (and all snapshots)
+		and you can set limits on a per-subvolume basis.  You can also create
+		quota groups and toss multiple subvolumes into a big group. 
+
+		qgroups only apply to subvolumes/snapshots.
+
+		It's everything you need to be a web hosting company and give
+		each user their own subvolume.
+
+	- device io error stats
+		The goal is to detect when drives start to get an increased error rate,
+		when drives should be replaced soon. Therefore statistic counters are
+		added that count IO errors (read, write and flush). Additionally, the
+		software detected errors like checksum errors and corrupted blocks are
+		counted.
+	
+		The final goal is to replace disks that have an increased error rate with
+		spare disks, and to repair this degenerated RAID state quickly.
+
+	- bigger metadata
+		As btree's height grows, the performance of workloads which issue to
+		searching tree will drop down, so bigger metadata can be very helpful
+		on getting a tree of low height.
+
+		the max metadata block size is 64k.  This limit is somewhat artificial,
+		but the memmove costs go through the roof for larger blocks.
+
+		for practical use, 16K blocksize performs best in most workloads.
+
+	- restriper
+		It allows to do selective profile changing and selective balancing
+		with some goodies like pausing/resuming and reporting progress to the
+		user
+
+		Profile changing is global (per-FS) so far, per-subvolume profiles
+		require some discussion and can be implemented in future.
+
+	- recovery mode
+	    The concept is quite simple.
+
+	    This takes some of the free space in the btrfs super block
+	    to record information about most of the roots in the last four
+	    commits.
+	    
+	    It also adds a -o recovery to use the root history log when
+	    we're not able to read the tree of tree roots, the extent
+	    tree root, the device tree root or the csum root.
+
+	- scrub
+		Scrubbing verifies data and metadata integrity, It works quite straightforward.
+		The extents of data and metadata are read sequentially and their checksums verified.
+		And Duplicated copies are checked in parellel.
+
+		If an error occurs (checksum or EIO), a good copy is then searched for. If
+		that is found, the bad copy will be overwritten.
+
+	- auto defrag
+	    It works straightforward.
+	    It will detect small random writes into files and queue the up
+	    for an auto defrag process.
+	    And Random write performance can get benefits.
+
+	- direct io speedup
+	    This idea is from ext4.  we can make the dio write parallel without
+	    having to hold imutex, and improve the performance.
+
+	    But it has its own limitations because we can not update isize without
+	    i_mutex, the unlocked dio write just can be done in front of the EOF.
+
+	    We needn't worry about the race between dio write and truncate, because the
+	    truncate need wait untill all the dio write end.
+
+	    And we also needn't worry about the race between dio write and punch hole,
+	    because we have extent lock to protect our operation.
+
+	- fsync speedup
+		it's a long story.  So btrfs has a write-ahead log tree which aims to
+		speedup fsync so that we don't have to commit every transaction to
+		ensure our data is safe on disk.
+		but we used to drop the whole log tree and then copy metadata from fs/file tree to this log tree
+		to make sure that we get new metadata, this is low efficient.
+
+		So now we don't drop the whole tree, but only update metadata in the log tree
+		that must be updated and we do not copy metadata either,
+		instead we build new metadata for log tree as the way we build metatdata for fs/file tree and
+
+		this ends up boost fsync performance.
+
+	- scrub speedup
+		scrub depends on scanning the whole filesystem, so we have to read
+		metadata, data and checksum from disk to memory, a more efficient readahead can help a lot here.
+		basically the new readahead is aware of disk and can merge io requests
+		on the disk and then send them down to block layer.
+		so that benefits not only scrub, but also other operations depends on scanning.
+
+	- improve error handling
+		This makes us go readonly gracefully on errors instead of crashing
+
+	- btrfsck
+		more bugfixs

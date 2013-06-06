@@ -1,0 +1,12 @@
+Data means a lot to every business. To maintain or fit requirements from the
+data storage, IT organization must learn to manage data storage effectively.
+The most common case in the world is that data growth results in seperate
+copies of the same data with disparate users, where storage system deduplication
+technology can offer a great increase in storage efficiency with saving the
+cost. Generally, data deduplication is a specialized form of data compression
+technique, typically to improve storage utilization. As btrfs has a good
+infrastructure to fit shared data by naturally supported block back-reference,
+this'd be a good start for data deduplication. This talk will show how to
+implement a btrfs specific data deduplication and how practical it is. For this
+session, there'd be some filesystem specific content, so for the target
+audience, it'd be better to have a basic knowledge base of filesystem.

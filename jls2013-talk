@@ -1,0 +1,255 @@
+- background
+	- deduplication intro
+
+	- btrfs intro
+		- COW b+tree
+		- easy disk management
+		- etc.
+
+- design
+	- why its inline, block level
+		- inline
+		- block level
+
+	- model in overall
+
+	- backref
+		- graph of relations among file data, logical data and disk data
+
+	- dedup process graph
+
+	- expect & tradeoff
+		- hash algorithm to generate hash/fingerprints
+			- what's fingerprints
+			- crc32c vs sha256
+			- colliosion
+		- where to store hash/fingerprints
+			- b+tree
+		- how to store/search hash/fingerprints
+			- key
+			- insert/delete
+		- how to avoid collisions: byte to byte comparison
+			- but this'll cause much IO
+		- compress
+			- we must take real disk length and compress type
+
+	- where is dedup engine code
+		- buffer write, cow path
+			- take a bunch of pages to process
+			- compress
+				- dedicated workers, async, aim to work across all online cpus
+
+	- explicit dedup process graph
+
+	- mount options
+		- "-o dedup"
+		- "-o dedup_bs=xxx"
+
+	- dedup register/unregister
+		- register, create the dedup btree
+		- unregister, delete the out-of-date dedup btree
+
+	- conclusion
+		- transparent dedup
+		- tunable granularity, ie. block level
+		- not default, easy to control, mount options
+
+	- limit
+		- effective
+			- backup, virtualization farm
+		- less effective
+			- structured data
+
+- performance
+	testcases
+
+	w/o
+	w/ dedup
+	w/ dedup+compress
+
+	- dedup ratio
+
+- demo
+
+- usual QA
+	- data security, raid
+	- fragments
+	- if dataset has duplicate data
+	- if it hurts performance
+
+------------------------------------------------
+- deduplication is a specialized compression technique for eliminating replicate copies of repeating data.
+This technique is used to improve storage utilization and network efficience, such as it can be applied
+to network data transfer to reduce the number of bytes that must be sent.
+- data in our world is just like candies in this picture, you can see a lot of candies,
+well more precisely, you can see a lot of candies with several different kind of colors.
+Also, you can see many copies of one piece of data in our daily use.
+For people especially for children, more candies are always welcome because they give us
+sweet, but data? it's different, well, data is welcome by corporations while duplicate data
+is definitely not.
+Actually I think it's our nature, we don't want to waste time and space.
+
+
+--------------------------------------
+- this shows how deduplication works at the highest level,
+Essentially, deduplication stores only unique blocks in the flexible volume and
+creates a small amount of additional metadata in the process.
+with only a few of metadata added, we get our disk space back!
+
+
+
+--------------------------------------
+- The practical benefits of this technology depend upon various factors like –
+
+    Point of Application
+    – Source Vs Target
+
+    Time of Application
+
+    – Inline vs Post-Process
+
+    Granularity
+
+    – File vs Sub-File level
+
+    Algorithm
+
+    – Fixed size blocks Vs Variable length data segments
+
+--------------------------------------
+These two terminologies are used in client-server mode.
+- Target based, the deduplication acts on the target data storage media.
+In this case the client is unmodified and not aware of any deduplication.
+
+On the contrary
+
+- Source based, acts on the data at the source before it’s moved.
+A deduplication aware backup agent is installed on the client which backs up
+only unique data. The result is improved bandwidth and storage utilization.
+But, this imposes additional computational load on the backup client. 
+
+
+--------------------------------------
+In target based deduplication, the deduplication engine can either process data
+for duplicates in real time or after its been stored in the target storage.
+
+- Inline
+ The obvious advantages are 
+    - Increase in overall efficiency as data is only passed and processed once
+    - The processed data is immediately available.
+ The disadvantages are -
+    - Decrease in write throughput
+    - Extent of deduplication is less – Only fixed-length block deduplication
+      approach can be use
+The inline deduplication only processed incoming raw blocks and
+does not have any knowledge of the files or file-structure.
+This forces it to use the fixed-length block approach
+
+- The post-process deduplication
+asynchronously acts on the stored data. And has an exact opposite effect on
+advantages and disadvantages of the inline deduplication
+
+
+--------------------------------------
+- File vs Sub-file Level Deduplication
+The duplicate removal algorithm can be applied on full file or sub-file levels.
+
+- Full file level duplicates, we can be easily calculate single checksum
+of the complete file data and comparing it against existing checksums of already
+backed up files. It’s simple and fast, but the extent of deduplication is very
+less, as it does not address the problem of duplicate content found inside
+different files or data-sets (e.g. emails).
+
+- The sub-file level deduplication technique breaks the file into smaller fixed or
+variable size blocks, and then uses standard hash based algorithm to find similar
+blocks. 
+
+
+--------------------------------------
+- Fixed-length block approach, as the name suggests, divides the files into fixed
+size length blocks and uses simple checksum (MD5/SHA etc.) based approach to
+find duplicates.
+Although it’s possible to look for repeated blocks, the approach has its limite.
+The reason is that the primary opportunity for data reduction is to find
+duplicate blocks in two datasets that are made up mostly – but not completely –
+of the same data segments. 
+Therefore, two datasets with a small amount of difference are likely to have
+very few identical fixed length blocks. 
+
+- Variable-Length Data Segment technology divides the data stream into variable
+length data segments with a methodology that can find the same block boundaries
+in different locations and contexts. This allows the boundaries to “float”
+within the data stream so that changes in one part of the dataset have little or
+no impact on the boundaries in other locations of the dataset. 
+
+
+--------------------------------------
+Data deduplication is a companion technology to data compression. It removes redundancy from stored data in
+addition to that which is removed by data compression alone.
+
+Although compression is an important first step in storage capacity management, it reduces capacity requirements only
+when data is first created. The redundancy introduced when compressed data is copied to duplicate it for other purposes
+cannot be removed by applying compression. Consequently, growth due to duplication of information must be
+managed through additional technology. Data deduplication, which is designed to remove redundancy resulting from
+business processes that duplicate information, addresses the issue of capacity growth.
+
+SO ombined with compression, deduplication offers a complete solution to maximize storage efficiency.
+
+
+--------------------------------------
+So back to the question: why btrfs needs dedup?
+People hopes btrfs to be a good fs for backup.
+With snapshot, btrfs has a large limit on file size and inode number, btrfs is really a good candidate.
+
+
+--------------------------------------
+Here I want to introduce btrfs features briefly
+there is no inode table.
+we write the checksum to disk along with data and metadata, and when reading, we'll check the related checksum
+to see if the data and metadata is broken.
+btrfs can act like traditional fs and DM.
+subvolume's inode space is individual, snapshot is very useful on backup.
+send/receive can work with readonly snapshot and is also useful on backup.
+
+
+--------------------------------------
+Okay now we get a new feature for btrfs, dedup.
+what kind of dedup we want for btrfs?
+So basically we want users to realize an immediate benefit in capacity utilization,
+and we want to inspect the contents of a file and remove redundancy both within both a file and between files.  
+Another reason is that btrfs write path is very fit for this kind of synchronous dedup.
+
+
+--------------------------------------
+If you think of a the whole system in terms of three main modules, it becomes easier to understand
+how we designed deduplication.
+As the diagram below shows, the three modules are
+1) an application process 
+2) a filesystem (Write Anywhere FIle Layout, or WAFL)
+3) the actual stored data objects (WAFL Blocks).
+
+As with any other modern filesystem, WAFL consists of a hierarchy of superblocks, inode pointers, 
+and associated metadata.  It is important to understand that WAFL does not know or care what application
+wrote the data or what protocol sent it.  Whether a data block is from a database, word doc, or medical image 
+is irrelevant as is the protocol that delivered it - CIFS, NFS, iSCSI, FC-SAN - none of that matters.
+it just knows it has received a bunch of data and it will store it onto disk.
+
+
+--------------------------------------
+it is because that btrfs has designed back reference,
+file extents link to logical blocks via back reference, and btrfs will then translate logical fs address to
+disk offset.
+
+
+--------------------------------------
+The first step in designing deduplication is to create a method of comparing data
+objects and figuring out which objects are unique and which are duplicate. 
+This generally involves the creation of a hash, or fingerprint, which is a small
+digital representation of a larger data object, and btrfs deduplication is no exception.
+
+What is fingerprint
+Fingerprint, that uniquely identifies the original data for all practical purposes
+just as human fingerprints uniquely identify people for practical purposes. 
+
+This requirement is somewhat similar to that of a checksum function, but is much more stringent. To detect accidental data corruption or transmission errors, it is sufficient that the checksums of the original file and any corrupted version will differ with near certainty, given some statistical model for the errors. In typical situations, this goal is easily achieved with 16- or 32-bit checksums. In contrast, file fingerprints need to be at least 64-bit long to guarantee virtual uniqueness in large file systems
+

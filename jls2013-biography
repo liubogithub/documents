@@ -1,0 +1,5 @@
+Liu Bo has been working on linux kernel development since late 2010.
+He is now working for Oracle and has given a talk in LinuxCon Japan 2012.
+He has been working on filesystem field and he's now focusing on btrfs
+development.  He helped btrfs to build up the error handling framework,
+per file cow/compression control and snapshot-aware defrag project and so on.
